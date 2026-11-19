@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import glbUrl from './character.glb?url';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 // ---------- noise / terrain height (pure function => seamless chunks, no loading) ----------
@@ -114,7 +115,7 @@ new GLTFLoader().load(glbUrl,gltf=>{
   model.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;o.frustumCulled=false;}});
   holder=new THREE.Group();holder.rotation.y=P.yaw+(flip?Math.PI:0);holder.add(model);wings=makeWings(1.75);holder.add(wings);scene.add(holder);
   mixer=new THREE.AnimationMixer(model);gltf.animations.forEach(c=>acts[c.name]=mixer.clipAction(c));
-  play('Run',0);loadMsg='';
+  clips=gltf.animations;play('Run',0);loadMsg='';
 },e=>{loadMsg=`キャラ読み込み中 ${(e.loaded/1048576).toFixed(1)}MB`;},e=>{loadMsg='キャラ読み込み失敗: '+(e.message||e);});
 
 // ---------- input (keyboard / mouse / touch) ----------
@@ -134,6 +135,30 @@ st.addEventListener('pointermove',e=>{if(e.pointerId===sid)sMove(e);});
 const sEnd=e=>{if(e.pointerId===sid){sid=null;stick.x=stick.y=0;kn.style.transform='';}};st.addEventListener('pointerup',sEnd);st.addEventListener('pointercancel',sEnd);
 jb.addEventListener('pointerdown',e=>{jumpHeld=true;jb.setPointerCapture(e.pointerId);e.stopPropagation();});
 const jEnd=()=>{jumpHeld=false;};jb.addEventListener('pointerup',jEnd);jb.addEventListener('pointercancel',jEnd);
+
+// ---------- multiplayer (WebSocket) ----------
+const qs=new URLSearchParams(location.search);
+const SERVER_URL=qs.get('server')||'wss://YOUR-SERVER.onrender.com';   // ← Renderで作ったサーバのURLに書き換える
+const MY_NAME=qs.get('name')||'旅人'+Math.floor(Math.random()*900+100);
+let ws=null,myId=null,netMsg='オフライン',clips=[],sendT=0;const remotes=new Map();
+function label(text){const c=document.createElement('canvas');c.width=256;c.height=64;const g=c.getContext('2d');g.font='bold 30px sans-serif';g.textAlign='center';g.fillStyle='#fff';g.strokeStyle='#4a3a52';g.lineWidth=6;g.strokeText(text,128,42);g.fillText(text,128,42);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),depthTest:false,fog:false}));sp.scale.set(2,.5,1);sp.position.y=2.3;sp.renderOrder=10;return sp;}
+function addRemote(id,name){if(!model||remotes.has(id))return;const holder=new THREE.Group(),m=SkeletonUtils.clone(model);holder.add(m,label(name));scene.add(holder);
+  const mixer=new THREE.AnimationMixer(m),acts={};clips.forEach(c=>acts[c.name]=mixer.clipAction(c));remotes.set(id,{holder,mixer,acts,cur:null,tx:0,ty:0,tz:0,yaw:0,a:0,init:false});}
+function updRemotes(dt){const k=Math.min(1,dt*10);for(const r of remotes.values()){const h=r.holder;
+  if(!r.init){h.position.set(r.tx,r.ty,r.tz);h.rotation.y=r.yaw;r.init=true;}
+  h.position.x+=(r.tx-h.position.x)*k;h.position.y+=(r.ty-h.position.y)*k;h.position.z+=(r.tz-h.position.z)*k;
+  h.rotation.y+=((((r.yaw+(flip?Math.PI:0)-h.rotation.y)%(Math.PI*2))+Math.PI*3)%(Math.PI*2)-Math.PI)*k;
+  const act=r.acts[r.a===2?'Climbing':'Run'];if(act){if(r.cur!==act){act.reset().fadeIn(.2).play();if(r.cur)r.cur.fadeOut(.2);r.cur=act;}act.timeScale=r.a===0?0:(r.a===3?.4:1);}
+  r.mixer.update(dt);}}
+function connect(){if(SERVER_URL.includes('YOUR-SERVER'))return;try{ws=new WebSocket(SERVER_URL);}catch(e){netMsg='接続失敗';return;}netMsg='接続中…';
+  ws.onopen=()=>{netMsg='オンライン';ws.send(JSON.stringify({t:'hi',n:MY_NAME}));};
+  ws.onmessage=e=>{let d;try{d=JSON.parse(e.data);}catch{return;}
+    if(d.t==='w')myId=d.id;
+    else if(d.t==='u'){const seen=new Set();for(const[id,x,y,z,r,a,n]of d.p){if(id===myId)continue;seen.add(id);addRemote(id,n);const o=remotes.get(id);if(o){o.tx=x;o.ty=y;o.tz=z;o.yaw=r;o.a=a;}}
+      for(const id of[...remotes.keys()])if(!seen.has(id)){scene.remove(remotes.get(id).holder);remotes.delete(id);}}};
+  ws.onclose=()=>{netMsg='切断 再接続中…';for(const r of remotes.values())scene.remove(r.holder);remotes.clear();setTimeout(connect,3000);};}
+connect();
 
 // ---------- loop ----------
 const clock=new THREE.Clock(),hud=document.getElementById('hud'),camTarget=new THREE.Vector3();let jumpLatch=false,fpsA=60,hudT=0;
@@ -171,12 +196,15 @@ function frame(){
     mixer.update(dt);}
   const cp=Math.cos(camPitch);let cy=P.pos.y+1.5+Math.sin(camPitch)*camDist;
   const cx=P.pos.x+Math.sin(camYaw)*cp*camDist,cz=P.pos.z+Math.cos(camYaw)*cp*camDist;cy=Math.max(cy,height(cx,cz)+1);
-  camera.position.lerp(camTarget.set(cx,cy,cz),Math.min(1,dt*12));camera.lookAt(P.pos.x,P.pos.y+1.3,P.pos.z);
+  camera.position.set(cx,cy,cz);camera.lookAt(P.pos.x,P.pos.y+1.3,P.pos.z);
   sky.position.copy(camera.position);
   sun.position.set(Math.round(P.pos.x+SUN_DIR.x*150),P.pos.y+SUN_DIR.y*150,Math.round(P.pos.z+SUN_DIR.z*150));sun.target.position.copy(P.pos);
   streamChunks(P.pos.x,P.pos.z,false);
   fpsA+=(1/Math.max(dt,1e-3)-fpsA)*.05;
-  if((hudT+=dt)>.3){hudT=0;hud.innerHTML=`SKYREALM ${fpsA|0}fps 高度 ${P.pos.y.toFixed(0)}m ${loadMsg}<br>WASD移動 / Shift走る / Space ジャンプ(空中で長押し=滑空) / ドラッグで視点`;}
+  if((hudT+=dt)>.3){hudT=0;hud.innerHTML=`SKYREALM ${fpsA|0}fps 高度 ${P.pos.y.toFixed(0)}m ${loadMsg} ${netMsg}${remotes.size?` 周囲${remotes.size}人`:''}<br>WASD移動 / Shift走る / Space ジャンプ(空中で長押し=滑空) / ドラッグで視点`;}
+  updRemotes(dt);
+  if((sendT+=dt)>.1&&ws&&ws.readyState===1){sendT=0;const a=P.gliding?3:(P.steep&&moving)?2:(Math.hypot(P.vel.x,P.vel.z)>.6||!P.grounded)?1:0;
+    ws.send(JSON.stringify({t:'s',x:+P.pos.x.toFixed(2),y:+P.pos.y.toFixed(2),z:+P.pos.z.toFixed(2),r:+P.yaw.toFixed(2),a}));}
   renderer.render(scene,camera);requestAnimationFrame(frame);
 }
 addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();});
