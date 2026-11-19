@@ -48,10 +48,11 @@ const CS=64,SEG=48,RAD=3;
 const chunks=new Map();
 const rng=s=>()=>((s=Math.imul(s^s>>>15,2246822519)+1013904223|0)>>>0)/4294967295;
 const grassGeo=new THREE.BufferGeometry();
-grassGeo.setAttribute('position',new THREE.Float32BufferAttribute([-.07,0,0,.07,0,0,0,1,0],3));
-grassGeo.setAttribute('color',new THREE.Float32BufferAttribute([.25,.45,.15,.25,.45,.15,.85,.95,.45],3));
+grassGeo.setAttribute('position',new THREE.Float32BufferAttribute([-.07,0,0,.07,0,0,0,1,0,.07,0,0,-.07,0,0,0,1,0],3));
+grassGeo.setAttribute('color',new THREE.Float32BufferAttribute([.25,.45,.15,.25,.45,.15,.85,.95,.45,.25,.45,.15,.25,.45,.15,.85,.95,.45],3));
+grassGeo.setAttribute('normal',new THREE.Float32BufferAttribute(new Array(6).fill([0,1,0]).flat(),3));
 const wind={value:0};
-const grassMat=new THREE.MeshLambertMaterial({vertexColors:true,side:THREE.DoubleSide});
+const grassMat=new THREE.MeshLambertMaterial({vertexColors:true});
 grassMat.onBeforeCompile=s=>{s.uniforms.uT=wind;s.vertexShader='uniform float uT;\n'+s.vertexShader.replace('#include <begin_vertex>',
  '#include <begin_vertex>\n vec4 wp=instanceMatrix*vec4(transformed,1.);transformed.x+=sin(uT*1.7+wp.x*.4+wp.z*.3)*.25*position.y;transformed.z+=cos(uT*1.3+wp.z*.35)*.15*position.y;');};
 const trunkGeo=new THREE.CylinderGeometry(.25,.5,5,6).translate(0,2.5,0);
@@ -59,7 +60,7 @@ const canopyGeo=(()=>{const pos=[];[[0,6,0,2.8],[1.3,5,.6,2],[-1.2,5.4,-.8,2.2]]
   const p=new THREE.IcosahedronGeometry(r,1).translate(x,y,z).toNonIndexed().attributes.position.array;for(const v of p)pos.push(v);});
   const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.computeVertexNormals();return g;})();
 const trunkMat=new THREE.MeshLambertMaterial({color:0x6b5039}),canopyMat=new THREE.MeshLambertMaterial({color:0x6fa04a,flatShading:true});
-const rockGeo=(()=>{const g=new THREE.DodecahedronGeometry(1,1),p=g.attributes.position;for(let i=0;i<p.count;i++){const k=1+(hash(i*7,3)-.5)*.5;p.setXYZ(i,p.getX(i)*k*1.3,p.getY(i)*k*.8,p.getZ(i)*k);}g.computeVertexNormals();return g;})();
+const rockGeo=(()=>{const g=new THREE.DodecahedronGeometry(1,1),p=g.attributes.position;for(let i=0;i<p.count;i++){const X=p.getX(i),Y=p.getY(i),Z=p.getZ(i),k=1+(hash(Math.round(X*50)+Math.round(Z*50)*131,Math.round(Y*50)+7)-.5)*.5;p.setXYZ(i,X*k*1.3,Y*k*.8,Z*k);}g.computeVertexNormals();return g;})();
 const rockMat=new THREE.MeshLambertMaterial({color:0x9a9486,flatShading:true});
 const terrMat=new THREE.MeshLambertMaterial({vertexColors:true});
 const cG=new THREE.Color(0x7aa83f),cG2=new THREE.Color(0xb5b95a),cR=new THREE.Color(0x8d8779),cR2=new THREE.Color(0xb5a98f),tmp=new THREE.Color(),tmp2=new THREE.Color();
@@ -99,8 +100,8 @@ function streamChunks(px,pz,burst){
 }
 
 // ---------- player ----------
-const P={pos:new THREE.Vector3(0,height(0,0)+.5,0),vel:new THREE.Vector3(),yaw:0,grounded:true,gliding:false,steep:false};
-let model=null,holder=null,mixer=null,acts={},cur=null,wings=null;
+const P={pos:new THREE.Vector3(0,height(0,0)+.5,0),vel:new THREE.Vector3(),yaw:Math.PI,grounded:true,gliding:false,steep:false};
+let loadMsg='キャラ読み込み中…';let model=null,holder=null,mixer=null,acts={},cur=null,wings=null;
 const flip=new URLSearchParams(location.search).get('flip')==='1';   // ?flip=1 if the model walks backwards
 function play(name,ts=1){const a=acts[name];if(!a)return;if(cur!==a){a.reset().fadeIn(.2).play();if(cur)cur.fadeOut(.2);cur=a;}a.timeScale=ts;}
 function makeWings(h){const g=new THREE.Group(),m=new THREE.MeshStandardMaterial({color:0xe8eef5,metalness:.6,roughness:.35,side:THREE.DoubleSide});
@@ -111,10 +112,10 @@ new GLTFLoader().load(glbUrl,gltf=>{
   model=gltf.scene;const box=new THREE.Box3().setFromObject(model),sc=1.75/(box.max.y-box.min.y);
   model.scale.setScalar(sc);model.position.y=-box.min.y*sc;
   model.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;o.frustumCulled=false;}});
-  holder=new THREE.Group();holder.add(model);wings=makeWings(1.75);holder.add(wings);scene.add(holder);
+  holder=new THREE.Group();holder.rotation.y=P.yaw+(flip?Math.PI:0);holder.add(model);wings=makeWings(1.75);holder.add(wings);scene.add(holder);
   mixer=new THREE.AnimationMixer(model);gltf.animations.forEach(c=>acts[c.name]=mixer.clipAction(c));
-  play('Run',0);const b=document.getElementById('boot');b.style.opacity=0;setTimeout(()=>b.remove(),900);
-},undefined,e=>{document.getElementById('boot').textContent='キャラクター読み込み失敗: '+(e.message||e);});
+  play('Run',0);loadMsg='';
+},e=>{loadMsg=`キャラ読み込み中 ${(e.loaded/1048576).toFixed(1)}MB`;},e=>{loadMsg='キャラ読み込み失敗: '+(e.message||e);});
 
 // ---------- input (keyboard / mouse / touch) ----------
 const keys={};let camYaw=0,camPitch=.35,camDist=7,jumpHeld=false,stick={x:0,y:0};
@@ -175,8 +176,9 @@ function frame(){
   sun.position.set(Math.round(P.pos.x+SUN_DIR.x*150),P.pos.y+SUN_DIR.y*150,Math.round(P.pos.z+SUN_DIR.z*150));sun.target.position.copy(P.pos);
   streamChunks(P.pos.x,P.pos.z,false);
   fpsA+=(1/Math.max(dt,1e-3)-fpsA)*.05;
-  if((hudT+=dt)>.3){hudT=0;hud.innerHTML=`SKYREALM ${fpsA|0}fps 高度 ${P.pos.y.toFixed(0)}m<br>WASD移動 / Shift走る / Space ジャンプ(空中で長押し=滑空) / ドラッグで視点`;}
+  if((hudT+=dt)>.3){hudT=0;hud.innerHTML=`SKYREALM ${fpsA|0}fps 高度 ${P.pos.y.toFixed(0)}m ${loadMsg}<br>WASD移動 / Shift走る / Space ジャンプ(空中で長押し=滑空) / ドラッグで視点`;}
   renderer.render(scene,camera);requestAnimationFrame(frame);
 }
 addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();});
 frame();
+{const b=document.getElementById('boot');b.style.opacity=0;setTimeout(()=>b.remove(),900);}
