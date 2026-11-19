@@ -27,7 +27,6 @@ const grad=(x,z)=>{const e=.8;return[(height(x+e,z)-height(x-e,z))/(2*e),(height
 const FOG=new THREE.Color(0xf3d6bd);
 const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.setSize(innerWidth,innerHeight);
 renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;
 document.body.appendChild(renderer.domElement);
@@ -125,14 +124,14 @@ new GLTFLoader().load(glbUrl,gltf=>{
 },e=>{loadMsg=`キャラ読み込み中 ${(e.loaded/1048576).toFixed(1)}MB`;},e=>{loadMsg='キャラ読み込み失敗: '+(e.message||e);});
 
 // ---------- input (keyboard / mouse / touch) ----------
-const keys={};let camYaw=0,camPitch=.35,camDist=7,jumpHeld=false,stick={x:0,y:0};
+const keys={};let camYaw=0,camPitch=.5,camDist=12,jumpHeld=false,stick={x:0,y:0};
 addEventListener('keydown',e=>{keys[e.code]=1;if(e.code==='Space'){jumpHeld=true;e.preventDefault();}});
 addEventListener('keyup',e=>{keys[e.code]=0;if(e.code==='Space')jumpHeld=false;});
 const cvs=renderer.domElement;let drag=null;
 cvs.addEventListener('pointerdown',e=>{drag={id:e.pointerId,x:e.clientX,y:e.clientY};});
 addEventListener('pointermove',e=>{if(drag&&e.pointerId===drag.id){camYaw-=(e.clientX-drag.x)*.006;camPitch=Math.min(1.2,Math.max(-.2,camPitch+(e.clientY-drag.y)*.005));drag.x=e.clientX;drag.y=e.clientY;}});
 addEventListener('pointerup',e=>{if(drag&&e.pointerId===drag.id)drag=null;});
-cvs.addEventListener('wheel',e=>{camDist=Math.min(16,Math.max(3,camDist+e.deltaY*.01));},{passive:true});
+cvs.addEventListener('wheel',e=>{camDist=Math.min(26,Math.max(4,camDist+e.deltaY*.01));},{passive:true});
 const st=document.getElementById('stick'),kn=document.getElementById('knob'),jb=document.getElementById('jump');let sid=null;
 const sMove=e=>{const r=st.getBoundingClientRect(),dx=e.clientX-(r.left+65),dy=e.clientY-(r.top+65),l=Math.min(1,Math.hypot(dx,dy)/55),a=Math.atan2(dy,dx);
   stick.x=Math.cos(a)*l;stick.y=Math.sin(a)*l;kn.style.transform=`translate(${stick.x*45}px,${stick.y*45}px)`;};
@@ -184,15 +183,15 @@ function frame(){
   if(moving&&P.grounded)P.yaw=Math.atan2(dx,dz);
   P.steep=P.grounded&&slope>1.25;
   if(P.grounded){
-    const sp=(P.steep?2.2:8)*sprint,k=Math.min(1,dt*10);P.vel.x+=(dx*sp-P.vel.x)*k;P.vel.z+=(dz*sp-P.vel.z)*k;
-    if(jumpHeld&&!jumpLatch){P.vel.y=9;P.grounded=false;jumpLatch=true;}
+    const sp=(P.steep?4:16)*sprint,k=Math.min(1,dt*10);P.vel.x+=(dx*sp-P.vel.x)*k;P.vel.z+=(dz*sp-P.vel.z)*k;
+    if(jumpHeld&&!jumpLatch){P.vel.y=11;P.grounded=false;jumpLatch=true;}
     if(!jumpHeld)jumpLatch=false;
   }else{
     P.gliding=jumpHeld&&P.vel.y<-1&&!jumpLatch;
     if(!jumpHeld)jumpLatch=false;
     if(P.gliding){P.vel.y=Math.max(P.vel.y-4*dt,-2.6);const fdx=moving?dx/il:Math.sin(P.yaw),fdz=moving?dz/il:Math.cos(P.yaw);
-      P.vel.x+=(fdx*17-P.vel.x)*dt*1.5;P.vel.z+=(fdz*17-P.vel.z)*dt*1.5;P.yaw=Math.atan2(P.vel.x,P.vel.z);}
-    else{P.vel.y-=24*dt;P.vel.x+=(dx*6-P.vel.x)*dt*2;P.vel.z+=(dz*6-P.vel.z)*dt*2;}
+      P.vel.x+=(fdx*28-P.vel.x)*dt*1.5;P.vel.z+=(fdz*28-P.vel.z)*dt*1.5;P.yaw=Math.atan2(P.vel.x,P.vel.z);}
+    else{P.vel.y-=24*dt;P.vel.x+=(dx*10-P.vel.x)*dt*2;P.vel.z+=(dz*10-P.vel.z)*dt*2;}
   }
   P.pos.addScaledVector(P.vel,dt);
   const gh=height(P.pos.x,P.pos.z);
@@ -202,11 +201,11 @@ function frame(){
     const target=P.yaw+(flip?Math.PI:0);holder.rotation.y+=((((target-holder.rotation.y)%(Math.PI*2))+Math.PI*3)%(Math.PI*2)-Math.PI)*Math.min(1,dt*14);
     wings.visible=P.gliding;model.rotation.x=P.gliding?1.2:0;
     const hs=Math.hypot(P.vel.x,P.vel.z);
-    if(!P.grounded)play('Run',.4);else if(P.steep&&moving)play('Climbing',1);else if(hs>.6)play('Run',hs/6);else play('Run',0);
+    if(!P.grounded)play('Run',.4);else if(P.steep&&moving)play('Climbing',1);else if(hs>.6)play('Run',Math.min(2.6,hs/9));else play('Run',0);
     mixer.update(dt);}
   const cp=Math.cos(camPitch);let cy=P.pos.y+1.5+Math.sin(camPitch)*camDist;
   const cx=P.pos.x+Math.sin(camYaw)*cp*camDist,cz=P.pos.z+Math.cos(camYaw)*cp*camDist;cy=Math.max(cy,height(cx,cz)+1);
-  camera.position.set(cx,cy,cz);camera.lookAt(P.pos.x,P.pos.y+1.3,P.pos.z);
+  camera.position.set(cx,cy,cz);camera.lookAt(P.pos.x,P.pos.y+1.0,P.pos.z);
   sky.position.copy(camera.position);
   sun.position.set(Math.round(P.pos.x+SUN_DIR.x*150),P.pos.y+SUN_DIR.y*150,Math.round(P.pos.z+SUN_DIR.z*150));sun.target.position.copy(P.pos);
   streamChunks(P.pos.x,P.pos.z,false);
@@ -219,6 +218,7 @@ function frame(){
     ch.send({type:'broadcast',event:'s',payload:{i:MY_ID,n:MY_NAME,x:+P.pos.x.toFixed(2),y:+P.pos.y.toFixed(2),z:+P.pos.z.toFixed(2),r:+P.yaw.toFixed(2),a}});}
   renderer.render(scene,camera);requestAnimationFrame(frame);
 }
-addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();});
+function fit(){const w=cvs.clientWidth||innerWidth,h=cvs.clientHeight||innerHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();}
+addEventListener('resize',fit);addEventListener('orientationchange',()=>setTimeout(fit,200));if(window.visualViewport)visualViewport.addEventListener('resize',fit);fit();
 frame();
 {const b=document.getElementById('boot');b.style.opacity=0;setTimeout(()=>b.remove(),900);}
