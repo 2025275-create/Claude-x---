@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import glbUrl from './character.glb?url';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { createClient } from '@supabase/supabase-js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 // ---------- noise / terrain height (pure function => seamless chunks, no loading) ----------
@@ -138,9 +140,10 @@ const jEnd=()=>{jumpHeld=false;};jb.addEventListener('pointerup',jEnd);jb.addEve
 
 // ---------- multiplayer (WebSocket) ----------
 const qs=new URLSearchParams(location.search);
-const SERVER_URL=qs.get('server')||'wss://YOUR-SERVER.onrender.com';   // ← Renderで作ったサーバのURLに書き換える
+const SB_URL=qs.get('sburl')||SUPABASE_URL,SB_KEY=qs.get('sbkey')||SUPABASE_ANON_KEY;
+const MY_ID=Math.random().toString(36).slice(2,10),NEAR=400,SEND_MS=250;
 const MY_NAME=qs.get('name')||'旅人'+Math.floor(Math.random()*900+100);
-let ws=null,myId=null,netMsg='オフライン',clips=[],sendT=0;const remotes=new Map();
+let ch=null,online=false,netMsg='オフライン',clips=[],sendT=0;const remotes=new Map();
 function label(text){const c=document.createElement('canvas');c.width=256;c.height=64;const g=c.getContext('2d');g.font='bold 30px sans-serif';g.textAlign='center';g.fillStyle='#fff';g.strokeStyle='#4a3a52';g.lineWidth=6;g.strokeText(text,128,42);g.fillText(text,128,42);
   const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),depthTest:false,fog:false}));sp.scale.set(2,.5,1);sp.position.y=2.3;sp.renderOrder=10;return sp;}
 function addRemote(id,name){if(!model||remotes.has(id))return;const holder=new THREE.Group(),m=SkeletonUtils.clone(model);holder.add(m,label(name));scene.add(holder);
@@ -151,13 +154,16 @@ function updRemotes(dt){const k=Math.min(1,dt*10);for(const r of remotes.values(
   h.rotation.y+=((((r.yaw+(flip?Math.PI:0)-h.rotation.y)%(Math.PI*2))+Math.PI*3)%(Math.PI*2)-Math.PI)*k;
   const act=r.acts[r.a===2?'Climbing':'Run'];if(act){if(r.cur!==act){act.reset().fadeIn(.2).play();if(r.cur)r.cur.fadeOut(.2);r.cur=act;}act.timeScale=r.a===0?0:(r.a===3?.4:1);}
   r.mixer.update(dt);}}
-function connect(){if(SERVER_URL.includes('YOUR-SERVER'))return;try{ws=new WebSocket(SERVER_URL);}catch(e){netMsg='接続失敗';return;}netMsg='接続中…';
-  ws.onopen=()=>{netMsg='オンライン';ws.send(JSON.stringify({t:'hi',n:MY_NAME}));};
-  ws.onmessage=e=>{let d;try{d=JSON.parse(e.data);}catch{return;}
-    if(d.t==='w')myId=d.id;
-    else if(d.t==='u'){const seen=new Set();for(const[id,x,y,z,r,a,n]of d.p){if(id===myId)continue;seen.add(id);addRemote(id,n);const o=remotes.get(id);if(o){o.tx=x;o.ty=y;o.tz=z;o.yaw=r;o.a=a;}}
-      for(const id of[...remotes.keys()])if(!seen.has(id)){scene.remove(remotes.get(id).holder);remotes.delete(id);}}};
-  ws.onclose=()=>{netMsg='切断 再接続中…';for(const r of remotes.values())scene.remove(r.holder);remotes.clear();setTimeout(connect,3000);};}
+function onState(d){if(!d||d.i===MY_ID||![d.x,d.y,d.z,d.r].every(Number.isFinite))return;
+  const dx=d.x-P.pos.x,dz=d.z-P.pos.z;if(dx*dx+dz*dz>NEAR*NEAR)return;
+  if(!remotes.has(d.i))addRemote(d.i,String(d.n||'旅人').slice(0,12));const o=remotes.get(d.i);
+  if(o){o.tx=d.x;o.ty=d.y;o.tz=d.z;o.yaw=d.r;o.a=d.a|0;o.seen=performance.now();}}
+function connect(){if(SB_URL.includes('YOUR-'))return;
+  const opt={realtime:{params:{eventsPerSecond:10}}};if(qs.get('sbvsn'))opt.realtime.vsn=qs.get('sbvsn');
+  const sb=createClient(SB_URL,SB_KEY,opt);netMsg='接続中…';
+  ch=sb.channel('world',{config:{broadcast:{self:false,ack:false}}});
+  ch.on('broadcast',{event:'s'},m=>onState(m.payload));
+  ch.subscribe(st=>{online=st==='SUBSCRIBED';netMsg=online?'オンライン':(st==='TIMED_OUT'||st==='CHANNEL_ERROR')?'接続エラー(再試行中)':st==='CLOSED'?'切断':'接続中…';});}
 connect();
 
 // ---------- loop ----------
@@ -203,8 +209,10 @@ function frame(){
   fpsA+=(1/Math.max(dt,1e-3)-fpsA)*.05;
   if((hudT+=dt)>.3){hudT=0;hud.innerHTML=`SKYREALM ${fpsA|0}fps 高度 ${P.pos.y.toFixed(0)}m ${loadMsg} ${netMsg}${remotes.size?` 周囲${remotes.size}人`:''}<br>WASD移動 / Shift走る / Space ジャンプ(空中で長押し=滑空) / ドラッグで視点`;}
   updRemotes(dt);
-  if((sendT+=dt)>.1&&ws&&ws.readyState===1){sendT=0;const a=P.gliding?3:(P.steep&&moving)?2:(Math.hypot(P.vel.x,P.vel.z)>.6||!P.grounded)?1:0;
-    ws.send(JSON.stringify({t:'s',x:+P.pos.x.toFixed(2),y:+P.pos.y.toFixed(2),z:+P.pos.z.toFixed(2),r:+P.yaw.toFixed(2),a}));}
+  const nowMs=performance.now();
+  for(const[id,r]of remotes)if(nowMs-(r.seen||nowMs)>4000){scene.remove(r.holder);remotes.delete(id);}   // 4秒音沙汰なしで退場
+  if(nowMs-sendT>SEND_MS&&online){sendT=nowMs;const a=P.gliding?3:(P.steep&&moving)?2:(Math.hypot(P.vel.x,P.vel.z)>.6||!P.grounded)?1:0;
+    ch.send({type:'broadcast',event:'s',payload:{i:MY_ID,n:MY_NAME,x:+P.pos.x.toFixed(2),y:+P.pos.y.toFixed(2),z:+P.pos.z.toFixed(2),r:+P.yaw.toFixed(2),a}});}
   renderer.render(scene,camera);requestAnimationFrame(frame);
 }
 addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();});

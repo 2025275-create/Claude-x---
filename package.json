@@ -1,0 +1,1 @@
+{"name":"skyrealm","version":"0.1.0","private":true,"type":"module","scripts":{"dev":"vite --host","build":"vite build","preview":"vite preview --host"},"dependencies":{"@supabase/supabase-js":"^2.119.1","three":"^0.160.0"},"devDependencies":{"vite":"^5.4.0"}}
